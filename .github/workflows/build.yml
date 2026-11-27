@@ -1,0 +1,109 @@
+name: Build Artifacts
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Windows 7 x64
+    runs-on: windows-2025
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Download PythonVista 3.14.10
+        shell: pwsh
+        run: |
+          $url = "https://github.com/adang1345/PythonVista/releases/download/v3.14.10/python-3.14.10-amd64-full.exe"
+          Invoke-WebRequest $url -OutFile python-installer.exe
+
+      - name: Install PythonVista 3.14.10
+        shell: pwsh
+        run: |
+          $pythonDir = "C:\Python314"
+
+          Start-Process .\python-installer.exe `
+            -ArgumentList "/quiet InstallAllUsers=1 TargetDir=$pythonDir Include_test=0 PrependPath=0" `
+            -Wait
+
+          if (!(Test-Path "$pythonDir\python.exe")) {
+            throw "PythonVista installation failed"
+          }
+
+          # Use it preferentially in subsequent steps of GitHub Actions as well.
+          "$pythonDir" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+          # Continue to use as the preferred option in the current step as well.
+          $env:PATH = "$pythonDir;$env:PATH"
+
+      - name: Verify Python
+        shell: pwsh
+        run: |
+          python --version
+          python -c "import sys, struct; print(sys.executable); print(struct.calcsize('P') * 8)"
+          python -c "import sys; assert sys.version_info[:3] == (3, 14, 10)"
+
+      - name: Install build requirements
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+
+          python -m pip install `
+            -r bundle/requirements/pip.txt
+
+          python -m pip install `
+            -r bundle/requirements/win-x64-pyinstaller.txt
+
+          python -m pip install `
+            -r bundle/requirements/curl-cffi.txt
+
+      - name: Pin compatibility versions
+        shell: pwsh
+        run: |
+          python -m pip install --force-reinstall --no-deps pyinstaller==6.22.3
+          python -m pip install --force-reinstall curl-cffi==0.17.0
+
+          python -m pip show pyinstaller
+          python -m pip show curl-cffi
+
+      - name: Verify PyInstaller
+        shell: pwsh
+        run: |
+          python -c "import PyInstaller; print('PyInstaller:', PyInstaller.__version__); print('Location:', PyInstaller.__file__)"
+
+          python -c "from PyInstaller.utils.win32 import winmanifest; print('PyInstaller Windows modules OK')"
+
+      - name: Prepare
+        shell: pwsh
+        run: |
+          python devscripts/make_lazy_extractors.py
+
+      - name: Build executable
+        shell: pwsh
+        run: |
+          python -m bundle.pyinstaller
+
+          if (!(Test-Path "dist/yt-dlp.exe")) {
+            throw "yt-dlp.exe was not generated"
+          }
+
+          Rename-Item `
+            "dist/yt-dlp.exe" `
+            "yt-dlp_win7.exe"
+
+      - name: Verify executable
+        shell: pwsh
+        run: |
+          .\dist\yt-dlp_win7.exe --version
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: yt-dlp_win7_x64
+          path: dist/yt-dlp_win7.exe
+          if-no-files-found: error
+          retention-days: 30
