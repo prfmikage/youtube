@@ -1,0 +1,72 @@
+name: Build Artifacts
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download PythonVista
+        shell: pwsh
+        run: |
+          $url = "https://github.com/adang1345/PythonVista/releases/download/v3.14.10/python-3.14.10-amd64-full.exe"
+          Invoke-WebRequest -Uri $url -OutFile python-installer.exe
+
+      - name: Install PythonVista
+        shell: pwsh
+        run: |
+          Start-Process -FilePath ".\python-installer.exe" `
+            -ArgumentList "/quiet InstallAllUsers=1 PrependPath=1 Include_test=0" `
+            -Wait
+
+      - name: Verify Python
+        shell: pwsh
+        run: |
+          python --version
+          python -m pip --version
+
+      - name: Install requirements
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r bundle/requirements/pip.txt
+          python -m pip install -r bundle/requirements/win-x64-pyinstaller.txt
+          python -m pip install -r bundle/requirements/curl-cffi.txt
+
+      - name: Prepare
+        shell: pwsh
+        run: |
+          python devscripts/make_lazy_extractors.py
+
+      - name: Build executable
+        shell: pwsh
+        run: |
+          python -m bundle.pyinstaller
+
+          if (!(Test-Path "dist/yt-dlp.exe")) {
+            throw "Build failed: yt-dlp.exe not found"
+          }
+
+          Rename-Item "dist/yt-dlp.exe" "yt-dlp_win7.exe"
+
+      - name: Test executable
+        shell: pwsh
+        run: |
+          .\dist\yt-dlp_win7.exe --version
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: yt-dlp_win7
+          path: dist/yt-dlp_win7.exe
+          if-no-files-found: error
+          retention-days: 30
